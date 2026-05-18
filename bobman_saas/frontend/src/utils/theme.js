@@ -5,11 +5,8 @@ const STORAGE_KEY = 'saas_theme';
 export function getTheme() {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved === 'dark' || saved === 'light') return saved;
-  // Fall back to system preference
-  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    return 'dark';
-  }
-  return 'light';
+  // Default to dark for first-time visitors (regardless of system preference).
+  return 'dark';
 }
 
 export function applyTheme(theme) {

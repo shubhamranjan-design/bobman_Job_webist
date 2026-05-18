@@ -35,6 +35,22 @@ class RoleView(Base):
     viewed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class Inquiry(Base):
+    __tablename__ = "inquiries"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    company_name = Column(String, nullable=False)
+    budget = Column(String, nullable=True)
+    role_code = Column(String, nullable=True)
+    email = Column(String, nullable=False)
+    contact = Column(String, nullable=False)
+    notes = Column(Text, nullable=True)
+    candidate_ids = Column(Text, nullable=False)   # JSON-encoded list
+    candidate_count = Column(Integer, nullable=False, default=0)
+    user_agent = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class CandidatePitch(Base):
     __tablename__ = "candidate_pitches"
     id = Column(Integer, primary_key=True, autoincrement=True)

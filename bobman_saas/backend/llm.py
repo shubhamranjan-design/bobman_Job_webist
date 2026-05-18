@@ -195,8 +195,7 @@ def _compose_fallback_pitch(inputs: dict) -> str:
     match = inputs.get("match") or {}
     call = inputs.get("best_call") or {}
     parts = []
-    name = user.get("name") or "The candidate"
-    parts.append(f"{name} is a strong potential fit.")
+    parts.append("This candidate is a strong potential fit.")
     score = match.get("matching_score")
     if score:
         parts.append(f"Match score: {score}/100.")
@@ -213,16 +212,28 @@ def _compose_fallback_pitch(inputs: dict) -> str:
     return " ".join(parts)
 
 
-def generate_pitch(db: Session, candidate_user_id: str, role_code: str) -> tuple[str, Optional[str]]:
+def generate_pitch(
+    db: Session,
+    candidate_user_id: str,
+    role_code: str,
+    masked_id: Optional[str] = None,
+    full_name: Optional[str] = None,
+    role_name: Optional[str] = None,
+) -> tuple[str, Optional[str]]:
     """
     Returns (pitch_text, source_match_jd_id). Caches in candidate_pitches table.
+
+    If masked_id is provided, the LLM prompt refers to the candidate by that masked
+    identifier — never by their real name. Any incidental name leakage in the
+    returned text is scrubbed via scrub_pii.
     """
+    from utils.masking import scrub_pii  # local import to avoid cycle on app boot
     cached = db.query(CandidatePitch).filter(
         CandidatePitch.candidate_user_id == candidate_user_id,
         CandidatePitch.role_code == role_code,
     ).first()
     if cached:
-        return cached.pitch_text, cached.source_match_jd_id
+        return scrub_pii(cached.pitch_text, full_name), cached.source_match_jd_id
 
     inputs = _fetch_pitch_inputs(candidate_user_id, role_code)
     user = inputs.get("user") or {}
@@ -264,9 +275,18 @@ def generate_pitch(db: Session, candidate_user_id: str, role_code: str) -> tuple
             "duration_secs": call.get("call_duration_secs"),
         }, default=str)[:1500]
 
-    prompt = f"""Write a concise 4–6 sentence company-facing pitch explaining why this candidate is a strong fit for the role "{role_code}". Be professional, factual, and confident. Highlight measurable strengths and relevant experience. Do NOT mention phone, email, or any contact details. Do not invent facts not present in the data.
+    candidate_ref = masked_id or "this candidate"
+    role_label = role_name or role_code or "the role"
+    prompt = f"""Write a concise 4–6 sentence company-facing pitch explaining why this candidate is a strong fit for the role "{role_label}". Be professional, factual, and confident. Highlight measurable strengths and relevant experience.
 
-Candidate name: {user.get("name") or "(name withheld)"}
+CRITICAL RULES:
+1. Refer to the candidate ONLY as "this candidate" or "they" — never use any personal name, first name, or last name even if it appears in the data.
+2. When referring to the role, use the role NAME ("{role_label}") — NEVER use internal role codes like US01, US02, US06, etc.
+3. Do NOT mention phone, email, LinkedIn, or any direct contact details.
+4. Do not invent facts not present in the data.
+
+Candidate ID (anonymized): {candidate_ref}
+Role: {role_label}
 Profile completion: {user.get("profile_completion_per")}%
 
 Profile / CV:
@@ -285,7 +305,8 @@ Pitch:"""
 
     try:
         pitch_text = _call_openrouter(prompt, max_tokens=400)
-        # Cache it
+        pitch_text = scrub_pii(pitch_text, full_name or user.get("name"))
+        # Cache the SCRUBBED text so future calls don't need to rescrub
         cp = CandidatePitch(
             candidate_user_id=candidate_user_id,
             role_code=role_code,
@@ -298,4 +319,5 @@ Pitch:"""
         return pitch_text, source_jd_id
     except Exception as e:
         logger.warning(f"OpenRouter pitch failed: {e} — using fallback")
-        return _compose_fallback_pitch(inputs), source_jd_id
+        fb = _compose_fallback_pitch(inputs)
+        return scrub_pii(fb, full_name or user.get("name")), source_jd_id

@@ -1,57 +1,41 @@
-// Resolve API base URL: production = same origin under /home/api, dev = vite proxy /api
+// Public, no-auth API client.
+// On bobman.ai we serve at the root, so /api/* works directly.
+// On the legacy api.bobmanconnect.com/home/ deployment, nginx rewrites /home/api/* → backend.
+// We pick the right base by inspecting the page URL at runtime.
 const API_BASE = (() => {
   if (import.meta.env.DEV) return '/api';
-  return '/home/api';
+  const path = (typeof window !== 'undefined' ? window.location.pathname : '/') || '/';
+  return path.startsWith('/home/') || path === '/home' ? '/home/api' : '/api';
 })();
-
-function getToken() {
-  return localStorage.getItem('saas_token');
-}
-
-function setToken(t) {
-  if (t) localStorage.setItem('saas_token', t);
-  else localStorage.removeItem('saas_token');
-}
 
 async function request(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-  const token = getToken();
-  if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-  if (res.status === 401) {
-    setToken(null);
-    if (!path.startsWith('/login')) {
-      window.location.href = '/home/login';
-    }
-    throw new Error('Unauthorized');
-  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Request failed (${res.status})`);
+    throw new Error(err.detail || err.message || `Request failed (${res.status})`);
   }
   return res.json();
 }
 
+function buildQuery(params) {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params || {})) {
+    if (v === undefined || v === null || v === '') continue;
+    sp.append(k, String(v));
+  }
+  const s = sp.toString();
+  return s ? `?${s}` : '';
+}
+
 export const api = {
-  login: (email, password) =>
-    request('/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
-  me: () => request('/me'),
-  listRoles: () => request('/roles'),
-  searchRoles: (q) => request(`/roles/search?q=${encodeURIComponent(q)}`),
-  getRole: (code) => request(`/roles/${encodeURIComponent(code)}`),
-  listCandidates: (code, limit = 20) =>
-    request(`/roles/${encodeURIComponent(code)}/candidates?limit=${limit}`),
-  getCandidate: (id, role) =>
-    request(`/candidates/${encodeURIComponent(id)}?role=${encodeURIComponent(role)}`),
-  unlock: (id, field) =>
-    request(`/candidates/${encodeURIComponent(id)}/unlock`, {
-      method: 'POST',
-      body: JSON.stringify({ field }),
-    }),
-  audioUrl: (candidateId, conversationId) => {
-    const t = getToken();
-    return `${API_BASE}/candidates/${encodeURIComponent(candidateId)}/audio/${encodeURIComponent(conversationId)}`;
-  },
+  getCatalog: (filters = {}) => request(`/catalog${buildQuery(filters)}`),
+  getCandidate: (maskedId) => request(`/candidate/${encodeURIComponent(maskedId)}`),
+  getRoles: () => request('/roles_public'),
+  submitInquiry: (body) =>
+    request('/inquiries', { method: 'POST', body: JSON.stringify(body) }),
+  audioUrl: (maskedId, conversationId) =>
+    `${API_BASE}/candidate/${encodeURIComponent(maskedId)}/audio/${encodeURIComponent(conversationId)}`,
 };
 
-export { getToken, setToken, API_BASE };
+export { API_BASE };

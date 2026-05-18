@@ -53,3 +53,6 @@ Thumbs.db
 *.tmp
 .cache/
 coverage/
+
+# Bobman.ai build output
+dist-bobman/
